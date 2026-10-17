@@ -1,0 +1,43 @@
+{
+  "name": "lapta",
+  "version": "1.0.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "bundle:android": "expo export --platform android",
+    "prebuild": "expo prebuild --platform android",
+    "apk": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-apk.ps1",
+    "lint": "eslint .",
+    "format": "prettier --write App.tsx src tests scripts/*.cjs *.json *.js"
+  },
+  "dependencies": {
+    "@expo-google-fonts/bree-serif": "^0.4.1",
+    "@expo-google-fonts/nunito-sans": "^0.4.2",
+    "buffer": "^6.0.3",
+    "expo": "~55.0.0",
+    "expo-asset": "~55.0.20",
+    "expo-font": "~55.0.8",
+    "expo-sqlite": "~55.0.20",
+    "expo-status-bar": "~55.0.6",
+    "expo-system-ui": "~55.0.22",
+    "react": "19.2.0",
+    "react-native": "0.83.10",
+    "react-native-ble-plx": "^3.5.1",
+    "react-native-safe-area-context": "~5.6.2",
+    "react-native-svg": "15.15.3",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.0",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "^55.0.1",
+    "prettier": "^3.9.10",
+    "sharp": "^0.35.5",
+    "tsx": "^4.20.0",
+    "typescript": "~5.9.2"
+  }
+}

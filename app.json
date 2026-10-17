@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "LAPTA",
+    "slug": "lapta",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "android": {
+      "package": "ni.lapta.energia",
+      "permissions": ["BLUETOOTH_CONNECT"],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#FFF9EF"
+      },
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
+    },
+    "plugins": [
+      "expo-sqlite",
+      "expo-font",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "neverForLocation": true
+        }
+      ],
+      "expo-asset",
+      "./plugins/withLaptaBluetooth",
+      "./plugins/withLaptaBuild"
+    ],
+    "assetBundlePatterns": ["**/*"],
+    "icon": "./assets/icon.png"
+  }
+}
