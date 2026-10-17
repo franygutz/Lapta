@@ -14,12 +14,16 @@ class Callbacks : public BLEServerCallbacks {
 // Ejemplo estructural: fields = "\"batteryV\":" + String(voltage, 3);
 bool readSensors(String &fields) { return false; }
 void setup() {
- Serial.begin(115200); BLEDevice::init("LAPTA"); BLEDevice::setMTU(247);
+ Serial.begin(115200);
+ char prototypeCode[19];
+ snprintf(prototypeCode, sizeof(prototypeCode), "LAPTA-%012llX", (unsigned long long)(ESP.getEfuseMac() & 0xFFFFFFFFFFFFULL));
+ Serial.print("Codigo para la etiqueta y la app: "); Serial.println(prototypeCode);
+ BLEDevice::init(prototypeCode); BLEDevice::setMTU(247);
  auto server=BLEDevice::createServer(); server->setCallbacks(new Callbacks());
  auto service=server->createService("5cba1000-7c21-4f89-a428-4c4150544100");
  telemetry=service->createCharacteristic("5cba1001-7c21-4f89-a428-4c4150544100",BLECharacteristic::PROPERTY_NOTIFY);
  telemetry->addDescriptor(new BLE2902()); service->start();
- auto advertising=BLEDevice::getAdvertising(); advertising->addServiceUUID(service->getUUID()); advertising->start();
+ auto advertising=BLEDevice::getAdvertising(); advertising->addServiceUUID(service->getUUID()); advertising->setScanResponse(true); advertising->start();
  Serial.println("BLE listo. Sensores pendientes: no se enviaran valores inventados.");
 }
 void loop() {

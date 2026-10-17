@@ -66,6 +66,7 @@ export type Reading = Frame & {
   source: Source;
   device: string;
   session?: string;
+  demoRate?: number;
 };
 export function solar(r?: Reading) {
   return r?.solarV !== undefined && r.solarA !== undefined
@@ -149,15 +150,19 @@ export function integrate(rows: Reading[]) {
   for (let i = 1; i < rows.length; i++) {
     const a = rows[i - 1]!,
       b = rows[i]!;
-    const dt = (b.time - a.time) / 3600000;
+    const elapsed = (b.time - a.time) / 3600000;
     if (
-      dt <= 0 ||
-      dt > 15 / 3600 ||
+      elapsed <= 0 ||
+      elapsed > 15 / 3600 ||
       a.device !== b.device ||
       a.source !== b.source ||
-      a.session !== b.session
+      a.session !== b.session ||
+      (a.source === "demo" && (a.demoRate ?? 1) !== (b.demoRate ?? 1))
     )
       continue;
+    const rate = a.source === "demo" ? (a.demoRate ?? 1) : 1;
+    if (!Number.isFinite(rate) || rate < 1 || rate > 360) continue;
+    const dt = elapsed * rate;
     const sa = solar(a),
       sb = solar(b);
     if (sa !== undefined && sb !== undefined) {
@@ -202,7 +207,9 @@ export function demo(
   seq: number,
   scenario: Scenario,
   previous?: Reading,
+  rate = 1,
 ): Reading {
+  rate = Number.isFinite(rate) ? Math.min(360, Math.max(1, rate)) : 1;
   let sun =
     scenario !== "sol" ? 0 : Math.max(0, 86 + 18 * Math.sin(time / 45000));
   let load = scenario === "noche" ? 48 : 32 + 6 * Math.sin(time / 23000);
@@ -219,7 +226,7 @@ export function demo(
     load = sun * 0.94;
   }
   const dt = previous
-    ? Math.max(0, Math.min(15, (time - previous.time) / 1000))
+    ? Math.max(0, Math.min(15, (time - previous.time) / 1000)) * rate
     : 0;
   const wh = Math.min(256, Math.max(0, stored + (net * dt) / 3600));
   return {
@@ -227,6 +234,7 @@ export function demo(
     seq,
     time,
     source: "demo",
+    demoRate: rate,
     device: "LAPTA-DEMO",
     solarV: scenario === "noche" ? 0 : 19.6,
     solarA: scenario === "noche" ? 0 : sun / 19.6,

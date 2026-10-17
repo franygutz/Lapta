@@ -11,6 +11,34 @@ import {
   integrate,
   solar,
 } from "../src/domain";
+test("modo pitch acelera el modelo sin alterar las potencias medidas", () => {
+  const initial = demo(1000, 1, "noche");
+  const normal = demo(3000, 2, "noche", initial, 1);
+  const pitch = demo(3000, 2, "noche", initial, 360);
+  assert.equal(pitch.loadW, normal.loadW);
+  assert.ok(pitch.soc! < initial.soc! - 3);
+  assert.ok(
+    Math.abs(
+      (initial.usableWh! - pitch.usableWh!) /
+        (initial.usableWh! - normal.usableWh!) -
+        360,
+    ) < 1e-8,
+  );
+  const a = { ...initial, demoRate: 360 };
+  const energy = integrate([a, pitch]);
+  assert.ok(Math.abs(energy.consumed - (48 * 720) / 3600) < 1e-8);
+  assert.equal(integrate([initial, pitch]).seconds, 0);
+  assert.ok(pitch.soc! >= 0 && pitch.soc! <= 100);
+});
+test("la aceleración nunca se aplica a lecturas reales", () => {
+  const a = {
+    ...demo(1000, 1, "noche"),
+    source: "real" as const,
+    demoRate: 360,
+  };
+  const b = { ...a, time: 3000 };
+  assert.ok(Math.abs(integrate([a, b]).consumed - (48 * 2) / 3600) < 1e-8);
+});
 test("los consumos y cargas menores de un vatio conservan sus estimaciones", () => {
   const r = {
     ...demo(1000, 1, "sol"),

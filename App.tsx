@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import {
   ActivityIndicator,
+  Alert,
   AppState,
   BackHandler,
   Image,
@@ -56,6 +57,8 @@ import {
   palettes,
   Theme,
 } from "./src/ui";
+import { Entry } from "./src/entry";
+import { Learning, DemoConnection } from "./src/learning";
 type Page =
   "Inicio" | "Energía" | "Batería" | "Salidas" | "Historial" | "Ajustes";
 type ThemeMode = "light" | "dark" | "auto";
@@ -66,12 +69,14 @@ const pageIcons: Record<string, string> = {
   Historial: "chart",
   Ajustes: "settings",
 };
-const duration = (hours?: number) =>
+const duration = (hours?: number, pitch = false) =>
   hours === undefined
     ? "Sin datos suficientes"
     : hours > 999
       ? "Más de 999 h"
-      : `${Math.floor(hours)} h ${Math.floor((hours % 1) * 60)} min`;
+      : pitch
+        ? `${hours.toLocaleString("es-NI", { maximumFractionDigits: 1 })} h`
+        : `${Math.floor(hours)} h ${Math.floor((hours % 1) * 60)} min`;
 export default function App() {
   return (
     <SafeAreaProvider>
@@ -80,6 +85,16 @@ export default function App() {
   );
 }
 function Lapta() {
+  const [guide, setGuide] = useState(false);
+  const [entered, setEntered] = useState(false);
+  const [pitch, setPitch] = useState(true);
+  const [prototypeCode, setPrototypeCode] = useState("");
+  const [details, setDetails] = useState(false);
+  const linking = useRef(false);
+  const entryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const lowNotified = useRef<string | undefined>(undefined);
   const system = useColorScheme();
   const [theme, setTheme] = useState<ThemeMode>("auto");
   const dark = theme === "dark" || (theme === "auto" && system === "dark");
@@ -103,6 +118,7 @@ function Lapta() {
   const scroll = useRef<ScrollView>(null);
   useEffect(() => {
     scroll.current?.scrollTo({ y: 0, animated: false });
+    setDetails(false);
   }, [page]);
   useEffect(() => {
     const listener = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -124,6 +140,7 @@ function Lapta() {
   const previous = useRef<Reading | undefined>(undefined);
   const seq = useRef(0);
   const previousScenario = useRef<Scenario>("sol");
+  const previousPitch = useRef(true);
   const demoSession = useRef<string | undefined>(undefined);
   const refreshId = useRef(0);
   const lastSaved = useRef<Record<string, number>>({});
@@ -174,7 +191,9 @@ function Lapta() {
       try {
         const mode = await preference("source"),
           savedTheme = await preference("theme"),
-          savedScenario = await preference("scenario");
+          savedScenario = await preference("scenario"),
+          savedCode = await preference("prototype-code"),
+          savedPitch = await preference("pitch");
         if (!alive) return;
         const next = mode === "real" ? "real" : "demo";
         sourceRef.current = next;
@@ -192,6 +211,8 @@ function Lapta() {
         previous.current = last;
         if (next === "demo") demoSession.current = last?.session;
         selectedDevice.current = next === "real" ? last?.device : undefined;
+        setPrototypeCode(savedCode ?? "");
+        setPitch(savedPitch !== "off");
         setReady(true);
       } catch (e) {
         report(e);
@@ -204,6 +225,7 @@ function Lapta() {
       alive = false;
       subscription.remove();
       ble.current?.destroy();
+      if (entryTimer.current) clearTimeout(entryTimer.current);
     };
   }, [report]);
   useEffect(() => {
@@ -216,13 +238,19 @@ function Lapta() {
   }, [ready, reload]);
   useEffect(() => {
     if (!ready) return;
-    if (source === "demo" && previousScenario.current !== scenario) {
+    if (
+      source === "demo" &&
+      (previousScenario.current !== scenario ||
+        previousPitch.current !== pitch ||
+        previous.current?.demoRate !== (pitch ? 360 : 1))
+    ) {
       previous.current = undefined;
       demoSession.current = String(Date.now());
       previousScenario.current = scenario;
+      previousPitch.current = pitch;
     }
     const tick = () => {
-      if (!active.current) return;
+      if (!active.current || !entered) return;
       setClock(Date.now());
       if (source === "demo") {
         const nextReading = demo(
@@ -230,6 +258,7 @@ function Lapta() {
           seq.current++,
           scenario,
           previous.current?.source === "demo" ? previous.current : undefined,
+          pitch ? 360 : 1,
         );
         accept({ ...nextReading, session: demoSession.current });
       }
@@ -237,7 +266,7 @@ function Lapta() {
     tick();
     const id = setInterval(tick, 2000);
     return () => clearInterval(id);
-  }, [ready, source, scenario, accept]);
+  }, [ready, entered, source, scenario, pitch, accept]);
   const changeSource = async (next: Source) => {
     if (next === source) return;
     try {
@@ -266,7 +295,11 @@ function Lapta() {
         accept,
         (nextStatus) => {
           setStatus(nextStatus);
-          if (nextStatus === "Conectado") setConnectedAt(Date.now());
+          if (nextStatus === "Conectado") {
+            setConnectedAt(Date.now());
+            setEntered(true);
+            if (entryTimer.current) clearTimeout(entryTimer.current);
+          }
         },
         setError,
       );
@@ -279,7 +312,10 @@ function Lapta() {
       await ensureBLE().disconnect();
       await ensureBLE().scan((d) =>
         setDevices((list) =>
-          list.some((x) => x.id === d.id) ? list : [...list, d],
+          (d.localName ?? d.name)?.toUpperCase() !== prototypeCode ||
+          list.some((x) => x.id === d.id)
+            ? list
+            : [...list, d],
         ),
       );
     } catch (e) {
@@ -299,12 +335,84 @@ function Lapta() {
       report(e);
     }
   };
+  const enterPrototype = async (code: string) => {
+    try {
+      setError("");
+      setStatus("Buscando tu LAPTA…");
+      linking.current = false;
+      setPrototypeCode(code);
+      await preference("prototype-code", code);
+      await changeSource("real");
+      await ensureBLE().disconnect();
+      await ensureBLE().scan((device) => {
+        if (
+          linking.current ||
+          (device.localName ?? device.name)?.toUpperCase() !== code
+        )
+          return;
+        linking.current = true;
+        if (entryTimer.current) clearTimeout(entryTimer.current);
+        void connect(device.id);
+      });
+      if (entryTimer.current) clearTimeout(entryTimer.current);
+      entryTimer.current = setTimeout(() => {
+        if (!linking.current)
+          setError(
+            "No encontramos esa LAPTA. Revisa el código y acércate a tu estación.",
+          );
+      }, 12500);
+    } catch (e) {
+      report(e);
+      throw e;
+    }
+  };
+  const logout = async () => {
+    try {
+      linking.current = false;
+      if (entryTimer.current) clearTimeout(entryTimer.current);
+      await ble.current?.disconnect();
+      await preference("prototype-code", "");
+      await preference("device", "");
+      setPrototypeCode("");
+      selectedDevice.current = undefined;
+      previous.current = undefined;
+      demoSession.current = String(Date.now());
+      refreshId.current++;
+      setReading(undefined);
+      setRows([]);
+      setDevices([]);
+      setGuide(false);
+      setError("");
+      setPage("Inicio");
+      setEntered(false);
+    } catch (e) {
+      report(e);
+    }
+  };
   const fresh =
     !!reading &&
     reading.source === source &&
     clock - reading.time <= 15000 &&
     (source === "demo" || status === "Conectado");
   const current = fresh ? reading : undefined;
+  useEffect(() => {
+    if (!entered || !fresh || reading?.soc === undefined) return;
+    const key = source + ":" + reading.device + ":" + (reading.session ?? "");
+    if (reading.soc > 25) {
+      lowNotified.current = undefined;
+      return;
+    }
+    if (reading.soc > 20 || lowNotified.current === key) return;
+    lowNotified.current = key;
+    Alert.alert(
+      source === "demo" ? "Batería baja · Simulación" : "Tu batería está baja",
+      `Te queda ${Math.round(reading.soc)} % de batería. Desconecta los aparatos que no necesites y recarga LAPTA cuando sea posible.`,
+      [
+        { text: "Entendido" },
+        { text: "Ver batería", onPress: () => setPage("Batería") },
+      ],
+    );
+  }, [entered, fresh, reading, source]);
   const energyRows = useMemo(() => {
     let generated = 0,
       consumed = 0;
@@ -324,6 +432,10 @@ function Lapta() {
     return integrate(rows.filter((r) => r.time >= today.getTime()));
   }, [rows]);
   const warnings = alerts(current);
+  if (current?.soc !== undefined && current.soc <= 20)
+    warnings.unshift(
+      `Te queda ${Math.round(current.soc)} % de batería. Reduce el consumo y recarga cuando puedas.`,
+    );
   if (source === "real" && !fresh)
     warnings.unshift(
       status === "Conectado"
@@ -353,43 +465,54 @@ function Lapta() {
           </Label>
         </View>
       </Card>
-      <Card>
-        <Label large>Tu reserva de energía</Label>
-        {metricRows([
-          metric("Voltaje", current?.batteryV, "V"),
-          metric("Corriente (+ carga)", current?.batteryA, "A"),
-          metric("Potencia neta", batteryPower(current), "W"),
-          metric("Energía utilizable", current?.usableWh, "Wh"),
-          metric("Temperatura", current?.temperature, "°C"),
-          metric("Salud (SOH)", current?.soh, "%"),
-          metric("Ciclos", current?.cycles, ""),
-        ])}
-      </Card>
-      <Card>
-        <Label>Autonomía sin aporte solar</Label>
-        <Label large>{duration(autonomy(current))}</Label>
-        <Label muted>
-          Energía utilizable ÷ consumo actual de las salidas. La duración real
-          cambia con el uso y las pérdidas de conversión.
-        </Label>
-        <Label>Tiempo de carga estimado</Label>
-        <Label large>{duration(chargeHours(current))}</Label>
-        <Label muted>
-          Supone potencia neta constante; la carga final puede tardar más.
-        </Label>
-      </Card>
-      <Chart
-        title="Carga (+) y descarga (−)"
-        rows={rows}
-        value={batteryPower}
-        unit="W"
-      />
-      <Chart
-        title="Carga disponible"
-        rows={rows}
-        value={(r) => r.soc}
-        unit="%"
-      />
+      <Button onPress={() => setDetails(!details)}>
+        {details ? "Ver menos" : "Ver detalles de batería"}
+      </Button>
+      {details && (
+        <>
+          <Card>
+            <Label large>Tu reserva de energía</Label>
+            {metricRows([
+              metric("Voltaje", current?.batteryV, "V"),
+              metric("Corriente (+ carga)", current?.batteryA, "A"),
+              metric("Potencia neta", batteryPower(current), "W"),
+              metric("Energía utilizable", current?.usableWh, "Wh"),
+              metric("Temperatura", current?.temperature, "°C"),
+              metric("Salud (SOH)", current?.soh, "%"),
+              metric("Ciclos", current?.cycles, ""),
+            ])}
+          </Card>
+          <Card>
+            <Label>Autonomía sin aporte solar</Label>
+            <Label large>
+              {duration(autonomy(current), source === "demo" && pitch)}
+            </Label>
+            <Label muted>
+              Energía utilizable ÷ consumo actual de las salidas. La duración
+              real cambia con el uso y las pérdidas de conversión.
+            </Label>
+            <Label>Tiempo de carga estimado</Label>
+            <Label large>
+              {duration(chargeHours(current), source === "demo" && pitch)}
+            </Label>
+            <Label muted>
+              Supone potencia neta constante; la carga final puede tardar más.
+            </Label>
+          </Card>
+          <Chart
+            title="Carga (+) y descarga (−)"
+            rows={rows}
+            value={batteryPower}
+            unit="W"
+          />
+          <Chart
+            title="Carga disponible"
+            rows={rows}
+            value={(r) => r.soc}
+            unit="%"
+          />
+        </>
+      )}
     </>
   );
   const outputList = [
@@ -453,10 +576,40 @@ function Lapta() {
         </SafeAreaView>
       </Theme.Provider>
     );
+  if (!entered)
+    return (
+      <Theme.Provider value={c}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: c.bg }}>
+          <StatusBar style={dark ? "light" : "dark"} />
+          <Entry
+            savedCode={prototypeCode}
+            status={status}
+            error={error}
+            onConnect={enterPrototype}
+            onOffline={() => {
+              void changeSource("real").then(() => setEntered(true));
+            }}
+            onDemo={async () => {
+              await changeSource("demo");
+              setStatus("Abriendo demostración…");
+              await new Promise<void>((resolve) => setTimeout(resolve, 900));
+              setEntered(true);
+            }}
+          />
+        </SafeAreaView>
+      </Theme.Provider>
+    );
   return (
     <Theme.Provider value={c}>
       <SafeAreaView style={{ flex: 1, backgroundColor: c.bg }}>
         <StatusBar style={dark ? "light" : "dark"} />
+        <Learning
+          open={guide}
+          onClose={() => {
+            setGuide(false);
+            void preference("learning-v1", "done").catch(report);
+          }}
+        />
         <View
           style={{
             paddingHorizontal: 22,
@@ -515,7 +668,7 @@ function Lapta() {
               }}
             >
               <Text style={{ fontFamily: "NunitoSans", color: "#0A3447" }}>
-                Modo demostración · Todos los datos son simulados
+                {pitch ? "Modo pitch · Simulación ×360" : "Demostración"}
               </Text>
             </View>
           )}
@@ -529,16 +682,12 @@ function Lapta() {
             <Label>No se pudieron cargar las fuentes locales.</Label>
           )}
           <View>
-            <Label muted>
-              {page === "Inicio"
-                ? "ENERGÍA QUE TE ACOMPAÑA"
-                : "TU ESTACIÓN LAPTA"}
-            </Label>
             <Label large>
               {page === "Inicio" ? "Tu energía, a la vista." : page}
             </Label>
           </View>
-          {warnings.map((w) => (
+
+          {[...new Set(warnings)].slice(0, details ? undefined : 1).map((w) => (
             <View
               key={w}
               accessibilityRole="alert"
@@ -574,78 +723,75 @@ function Lapta() {
                 <BatteryRing soc={current?.soc} />
                 <View style={{ alignItems: "center", gap: 4 }}>
                   <Label>{batteryState(current)}</Label>
-                  <Label large>{duration(autonomy(current))}</Label>
-                  <Label muted>de autonomía estimada sin aporte solar</Label>
+                  <Label large>
+                    {duration(autonomy(current), source === "demo" && pitch)}
+                  </Label>
+                  <Label muted>de uso estimado sin sol</Label>
                 </View>
                 <Button onPress={() => setPage("Batería")}>
                   Ver mi batería
                 </Button>
               </Card>
-              <Card
-                style={{ backgroundColor: "#F7B92D", borderColor: "#F7B92D" }}
-              >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 10,
-                  }}
-                >
-                  <Icon name="sun" color="#0A3447" />
-                  <Text style={{ color: "#0A3447", fontFamily: "NunitoSans" }}>
-                    DEL SOL A TU HOGAR
-                  </Text>
-                </View>
-                <Text
-                  style={{
-                    fontFamily: "BreeSerif",
-                    fontSize: 44,
-                    color: "#0A3447",
-                  }}
-                >
-                  {solar(current)?.toFixed(1) ?? "—"}{" "}
-                  <Text style={{ fontSize: 22 }}>W</Text>
-                </Text>
-                <Text style={{ fontFamily: "NunitoSans", color: "#0A3447" }}>
-                  {current?.faults.includes("solar")
-                    ? "El hardware reporta una falla"
-                    : solar(current) === undefined
-                      ? "Conecta LAPTA para conocer la generación"
-                      : (solar(current) ?? 0) > 5
-                        ? "Tu panel está produciendo energía"
-                        : "Generación baja: puede faltar luz solar"}
-                </Text>
-                <Button onPress={() => setPage("Energía")}>
-                  Explorar generación
-                </Button>
-              </Card>
               <Card>
-                {metricRows([
-                  metric("Consumo actual", current?.loadW, "W"),
-                  metric(
-                    "Solar registrada hoy",
-                    todayTotals.solarSeconds
-                      ? todayTotals.generated
-                      : undefined,
-                    "Wh",
-                  ),
-                ])}
-                <Label muted>
-                  {current
-                    ? `Última lectura: ${new Date(current.time).toLocaleTimeString("es-NI")}`
-                    : "Esperando una lectura reciente"}
+                <Label large>
+                  {current?.faults.includes("solar")
+                    ? "Revisa tu panel"
+                    : solar(current) === undefined
+                      ? "Esperando a tu LAPTA"
+                      : (solar(current) ?? 0) > 5
+                        ? "El sol está aportando energía"
+                        : "Hay poca luz solar"}
                 </Label>
+                <Button onPress={() => setPage("Energía")}>Ver energía</Button>
               </Card>
-              <Flow
-                solarW={solar(current)}
-                batteryW={batteryPower(current)}
-                loadW={current?.loadW}
-                fresh={fresh}
-              />
+              <Button onPress={() => setDetails(!details)}>
+                {details ? "Ver menos" : "Ver detalles"}
+              </Button>
+              {details && (
+                <>
+                  <Card>
+                    {metricRows([
+                      metric("Consumo actual", current?.loadW, "W"),
+                      metric(
+                        "Solar registrada hoy",
+                        todayTotals.solarSeconds
+                          ? todayTotals.generated
+                          : undefined,
+                        "Wh",
+                      ),
+                    ])}
+                    <Label muted>
+                      {current
+                        ? `Última lectura: ${new Date(current.time).toLocaleTimeString("es-NI")}`
+                        : "Esperando una lectura reciente"}
+                    </Label>
+                  </Card>
+                  <Flow
+                    solarW={solar(current)}
+                    batteryW={batteryPower(current)}
+                    loadW={current?.loadW}
+                    fresh={fresh}
+                  />
+                </>
+              )}
             </>
           )}
           {page === "Energía" && (
             <>
+              <Card>
+                <Label>Vida útil del panel</Label>
+                <Label large>Aún no evaluada</Label>
+                <Button
+                  onPress={() =>
+                    Alert.alert(
+                      "Vida útil del panel",
+                      "La producción de hoy no indica cuántos años le quedan al panel. Para evaluar su desgaste se necesita una revisión técnica y comparar mediciones bajo condiciones equivalentes de luz y temperatura.",
+                    )
+                  }
+                >
+                  Cómo se evalúa
+                </Button>
+              </Card>
               <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
                 <Button selected onPress={() => setPage("Energía")}>
                   Panel solar
@@ -654,51 +800,67 @@ function Lapta() {
                 <Button onPress={() => setPage("Salidas")}>6 salidas</Button>
               </View>
               <Card>
-                <Label large>La energía empieza aquí</Label>
-                {metricRows([
-                  metric("Potencia solar", solar(current), "W"),
-                  metric("Voltaje del panel", current?.solarV, "V"),
-                  metric("Corriente del panel", current?.solarA, "A"),
-                  metric(
-                    "Total diario del equipo",
-                    current?.solarTodayWh,
-                    "Wh",
-                  ),
-                  metric(
-                    "Registrado hoy",
-                    todayTotals.solarSeconds
-                      ? todayTotals.generated
-                      : undefined,
-                    "Wh",
-                  ),
-                  metric(
-                    "Máximo registrado hoy",
-                    rows.some((r) => solar(r) !== undefined)
-                      ? rows.reduce(
-                          (maximum, r) => Math.max(maximum, solar(r) ?? 0),
-                          0,
-                        )
-                      : undefined,
-                    "W",
-                  ),
-                ])}
-                <Label muted>
-                  Una generación baja no confirma una falla. Solo se muestra una
-                  falla cuando el controlador la reporta.
+                <Label large>
+                  {solar(current) === undefined
+                    ? "Esperando una lectura"
+                    : (solar(current) ?? 0) > 5
+                      ? "Tu panel está aprovechando el sol"
+                      : "Hay poca luz solar"}
                 </Label>
               </Card>
-              <Chart
-                title="Producción solar registrada"
-                rows={rows}
-                value={solar}
-                unit="W"
-              />
-              <Flow
-                solarW={solar(current)}
-                batteryW={batteryPower(current)}
-                loadW={current?.loadW}
-                fresh={fresh}
-              />
+              <Button onPress={() => setDetails(!details)}>
+                {details ? "Ver menos" : "Ver detalles de energía"}
+              </Button>
+              {details && (
+                <>
+                  <Card>
+                    <Label large>La energía empieza aquí</Label>
+                    {metricRows([
+                      metric("Potencia solar", solar(current), "W"),
+                      metric("Voltaje del panel", current?.solarV, "V"),
+                      metric("Corriente del panel", current?.solarA, "A"),
+                      metric(
+                        "Total diario del equipo",
+                        current?.solarTodayWh,
+                        "Wh",
+                      ),
+                      metric(
+                        "Registrado hoy",
+                        todayTotals.solarSeconds
+                          ? todayTotals.generated
+                          : undefined,
+                        "Wh",
+                      ),
+                      metric(
+                        "Máximo registrado hoy",
+                        rows.some((r) => solar(r) !== undefined)
+                          ? rows.reduce(
+                              (maximum, r) => Math.max(maximum, solar(r) ?? 0),
+                              0,
+                            )
+                          : undefined,
+                        "W",
+                      ),
+                    ])}
+                    <Label muted>
+                      Una generación baja no confirma una falla. Solo se muestra
+                      una falla cuando el controlador la reporta.
+                    </Label>
+                  </Card>
+                  <Chart
+                    title="Producción solar registrada"
+                    rows={rows}
+                    value={solar}
+                    unit="W"
+                  />
+                  <Flow
+                    solarW={solar(current)}
+                    batteryW={batteryPower(current)}
+                    loadW={current?.loadW}
+                    fresh={fresh}
+                  />
+                </>
+              )}
             </>
           )}
           {(page === "Batería" || page === "Salidas") && (
@@ -733,6 +895,9 @@ function Lapta() {
                   control remoto de las salidas.
                 </Label>
               </Card>
+              <Button onPress={() => setDetails(!details)}>
+                {details ? "Ver menos" : "Información de las salidas"}
+              </Button>
               {outputList.map(([name, power, description]) => (
                 <Card key={name}>
                   <View
@@ -746,7 +911,7 @@ function Lapta() {
                     <View style={{ flex: 1 }}>
                       <Label large>{name}</Label>
                       <Label>{power}</Label>
-                      <Label muted>{description}</Label>
+                      {details && <Label muted>{description}</Label>}
                     </View>
                   </View>
                 </Card>
@@ -780,115 +945,153 @@ function Lapta() {
                 {rows.length} lecturas · {Math.round(totals.seconds / 60)} min
                 cubiertos
               </Label>
-              <Card>
-                {metricRows([
-                  metric(
-                    "Solar registrada",
-                    totals.solarSeconds ? totals.generated : undefined,
-                    "Wh",
-                  ),
-                  metric(
-                    "Consumo registrado",
-                    totals.loadSeconds ? totals.consumed : undefined,
-                    "Wh",
-                  ),
-                  metric(
-                    "Carga de batería",
-                    totals.batterySeconds ? totals.charge : undefined,
-                    "Wh",
-                  ),
-                  metric(
-                    "Descarga de batería",
-                    totals.batterySeconds ? totals.discharge : undefined,
-                    "Wh",
-                  ),
-                ])}
-                <Label muted>
-                  Se integran lecturas separadas por hasta 15 segundos. Los
-                  períodos sin lecturas no se estiman.
-                </Label>
-              </Card>
               <Chart
-                title="Generación solar"
-                rows={rows}
-                value={solar}
-                unit="W"
-              />
-              <Chart
-                title="Consumo de la estación"
-                rows={rows}
-                value={(r) => r.loadW}
-                unit="W"
-              />
-              <Chart
-                title="Carga y descarga"
-                rows={rows}
-                value={batteryPower}
-                unit="W"
-              />
-              <Chart
-                title="Evolución de batería"
+                title="Tu batería en el tiempo"
                 rows={rows}
                 value={(r) => r.soc}
                 unit="%"
               />
-              <Chart
-                title="Solar acumulada registrada"
-                rows={energyRows}
-                value={(r) =>
-                  solar(r) === undefined
-                    ? undefined
-                    : (r as Reading & { generatedWh: number }).generatedWh
-                }
-                unit="Wh"
-              />
-              <Chart
-                title="Consumo acumulado registrado"
-                rows={energyRows}
-                value={(r) =>
-                  r.loadW === undefined
-                    ? undefined
-                    : (r as Reading & { consumedWh: number }).consumedWh
-                }
-                unit="Wh"
-              />
-              <Button
-                disabled={!rows.length}
-                onPress={() => {
-                  const csv =
-                    "origen,dispositivo,fecha,solar_W,consumo_W,bateria_W,soc\n" +
-                    rows
-                      .slice(-2000)
-                      .map((r) =>
-                        [
-                          r.source,
-                          r.device,
-                          new Date(r.time).toISOString(),
-                          solar(r) ?? "",
-                          r.loadW ?? "",
-                          batteryPower(r) ?? "",
-                          r.soc ?? "",
-                        ].join(","),
-                      )
-                      .join("\n");
-                  void Share.share({
-                    message: csv,
-                    title: "Historial LAPTA",
-                  }).catch(report);
-                }}
-              >
-                Compartir hasta 2.000 registros CSV
+              <Button onPress={() => setDetails(!details)}>
+                {details ? "Ver menos" : "Ver más estadísticas"}
               </Button>
+              {details && (
+                <>
+                  <Card>
+                    {metricRows([
+                      metric(
+                        "Solar registrada",
+                        totals.solarSeconds ? totals.generated : undefined,
+                        "Wh",
+                      ),
+                      metric(
+                        "Consumo registrado",
+                        totals.loadSeconds ? totals.consumed : undefined,
+                        "Wh",
+                      ),
+                      metric(
+                        "Carga de batería",
+                        totals.batterySeconds ? totals.charge : undefined,
+                        "Wh",
+                      ),
+                      metric(
+                        "Descarga de batería",
+                        totals.batterySeconds ? totals.discharge : undefined,
+                        "Wh",
+                      ),
+                    ])}
+                    <Label muted>
+                      Se integran lecturas separadas por hasta 15 segundos. Los
+                      períodos sin lecturas no se estiman.
+                    </Label>
+                  </Card>
+                  <Chart
+                    title="Generación solar"
+                    rows={rows}
+                    value={solar}
+                    unit="W"
+                  />
+                  <Chart
+                    title="Consumo de la estación"
+                    rows={rows}
+                    value={(r) => r.loadW}
+                    unit="W"
+                  />
+                  <Chart
+                    title="Carga y descarga"
+                    rows={rows}
+                    value={batteryPower}
+                    unit="W"
+                  />
+                  <Chart
+                    title="Evolución de batería"
+                    rows={rows}
+                    value={(r) => r.soc}
+                    unit="%"
+                  />
+                  <Chart
+                    title="Solar acumulada registrada"
+                    rows={energyRows}
+                    value={(r) =>
+                      solar(r) === undefined
+                        ? undefined
+                        : (r as Reading & { generatedWh: number }).generatedWh
+                    }
+                    unit="Wh"
+                  />
+                  <Chart
+                    title="Consumo acumulado registrado"
+                    rows={energyRows}
+                    value={(r) =>
+                      r.loadW === undefined
+                        ? undefined
+                        : (r as Reading & { consumedWh: number }).consumedWh
+                    }
+                    unit="Wh"
+                  />
+                  <Button
+                    disabled={!rows.length}
+                    onPress={() => {
+                      const csv =
+                        "origen,dispositivo,fecha,solar_W,consumo_W,bateria_W,soc,velocidad_simulada\n" +
+                        rows
+                          .slice(-2000)
+                          .map((r) =>
+                            [
+                              r.source,
+                              r.device,
+                              new Date(r.time).toISOString(),
+                              solar(r) ?? "",
+                              r.loadW ?? "",
+                              batteryPower(r) ?? "",
+                              r.soc ?? "",
+                              r.source === "demo" ? (r.demoRate ?? 1) : 1,
+                            ].join(","),
+                          )
+                          .join("\n");
+                      void Share.share({
+                        message: csv,
+                        title: "Historial LAPTA",
+                      }).catch(report);
+                    }}
+                  >
+                    Compartir hasta 2.000 registros CSV
+                  </Button>
+                </>
+              )}
             </>
           )}
           {page === "Ajustes" && (
             <>
+              <Button
+                onPress={() => {
+                  void logout();
+                }}
+              >
+                Salir de mi LAPTA
+              </Button>
+              <Button
+                onPress={() => {
+                  setEntered(false);
+                  setError("");
+                  void ble.current?.disconnect();
+                }}
+              >
+                Conectar otra LAPTA
+              </Button>
+              <Button onPress={() => setGuide(true)}>Ayuda rápida</Button>
+              <Button onPress={() => setDetails(!details)}>
+                {details
+                  ? "Ocultar información avanzada"
+                  : "Mostrar información avanzada"}
+              </Button>
+              {source === "demo" && details && <DemoConnection />}
               <Card>
                 <Label large>Cómo quieres usar LAPTA</Label>
                 <Button
                   selected={source === "real"}
                   onPress={() => {
-                    void changeSource("real");
+                    setEntered(false);
+                    setError("");
                   }}
                 >
                   Dispositivo real
@@ -909,6 +1112,17 @@ function Lapta() {
               {source === "demo" ? (
                 <Card>
                   <Label>Escenario de demostración</Label>
+                  <Button
+                    selected={pitch}
+                    onPress={() => {
+                      setPitch(!pitch);
+                      void preference("pitch", pitch ? "off" : "on").catch(
+                        report,
+                      );
+                    }}
+                  >
+                    {pitch ? "Modo pitch: activado" : "Modo pitch: desactivado"}
+                  </Button>
                   {(
                     [
                       ["sol", "Sol y carga"],
@@ -1010,19 +1224,21 @@ function Lapta() {
                   </Button>
                 ))}
               </Card>
-              <Card>
-                <Label large>Hecha para funcionar cerca de ti</Label>
-                <Label>Bluetooth directo · SQLite local · Sin cuentas</Label>
-                <Label muted>
-                  La app funciona sin Wi-Fi ni datos móviles. Las protecciones
-                  eléctricas corresponden al BMS y al controlador.
-                </Label>
-                <Label muted>
-                  Los umbrales reales deben venir del firmware, según la batería
-                  y los componentes instalados. Sin especificaciones verificadas
-                  no se aplican umbrales genéricos.
-                </Label>
-              </Card>
+              {details && (
+                <Card>
+                  <Label large>Hecha para funcionar cerca de ti</Label>
+                  <Label>Bluetooth directo · SQLite local · Sin cuentas</Label>
+                  <Label muted>
+                    La app funciona sin Wi-Fi ni datos móviles. Las protecciones
+                    eléctricas corresponden al BMS y al controlador.
+                  </Label>
+                  <Label muted>
+                    Los umbrales reales deben venir del firmware, según la
+                    batería y los componentes instalados. Sin especificaciones
+                    verificadas no se aplican umbrales genéricos.
+                  </Label>
+                </Card>
+              )}
             </>
           )}
         </ScrollView>

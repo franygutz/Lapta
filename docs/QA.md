@@ -38,6 +38,34 @@
 
 El primer arranque del emulador mostró bloqueos de Pixel Launcher/System UI. El controlador de pruebas cierra esos procesos del sistema y falla explícitamente si un bloqueo corresponde a LAPTA. El recorrido final terminó aprobado.
 
+## Ayuda y conexión de demostración
+
+**Revisión posterior:** el recorrido de seis pasos descrito a continuación corresponde a la versión anterior. La versión actual abre con código de estación, omite la bienvenida obligatoria y ofrece una única tarjeta de ayuda en Ajustes. Inicio, Energía, Batería e Historial muestran primero información breve y despliegan datos técnicos al pedirlos. Ver [acceso por código](ACCESO-POR-CODIGO.md). El recorrido vigente es `python scripts/android-simple-smoke.py`.
+
+Recorrido vigente aprobado en Android: entrada, código inválido, demo sin tutorial, Inicio sin consumo técnico visible, despliegue de detalles, ayuda breve y regreso a la entrada. Capturas: [entrada](capturas/13-entrada-codigo.png), [Inicio simple](capturas/14-inicio-simple.png), [ayuda breve](capturas/15-ayuda-breve.png). TypeScript, lint, 13 pruebas y APK release aprobados. Los intentos iniciales encontraron bloqueos de System UI y un selector que pulsaba controles parcialmente tapados por las pestañas; se corrigió el selector del controlador de pruebas y el recorrido final pasó. No se verificó el identificador con un ESP32 físico.
+
+Se añadió una bienvenida de seis pasos que explica %, W, Wh, V y A con ejemplos cotidianos. Su cierre se recuerda en SQLite. «Entender mi energía» permite volver a abrirla desde cualquier sección y las etiquetas de las mediciones abren explicaciones específicas.
+
+En Ajustes → Modo demostración se puede practicar búsqueda, selección, conexión y desconexión. Este flujo no usa BLE y mantiene visibles las etiquetas de simulación. Las lecturas demo continúan independientemente de la práctica de conexión.
+
+El aviso de reserva al 20 % es una recomendación de uso, independiente de los límites de protección enviados por el hardware. Requiere SOC recibido y lectura actual; no estima un porcentaje a partir del voltaje. Se muestra un diálogo con la app abierta y una advertencia persistente mientras SOC ≤20 %. Se vuelve a habilitar después de superar 25 %; no notifica en segundo plano.
+
+Recorrido adicional: `python scripts/android-learning-smoke.py` (solo emulador).
+
+La compilación Android actualizada, TypeScript, lint y las 13 pruebas existentes pasaron. En el emulador se recorrieron la guía y su reapertura, búsqueda/conexión/desconexión simuladas y el aviso nativo de batería. Capturas: [guía](capturas/10-bienvenida.png), [conexión simulada](capturas/11-conexion-simulada.png), [aviso de batería](capturas/12-aviso-bateria.png). El primer intento perdió una pulsación durante bloqueos de System UI; se añadieron esperas por paso. El segundo llegó al aviso y requirió corregir el selector del botón nativo, que Android muestra en mayúsculas (`ENTENDIDO`).
+
+## Revisión para pitch
+
+Modo pitch activado por defecto solo en demostración, con factor ×360 y opción de desactivarlo en Ajustes. El modelo actualiza la reserva cada dos segundos; las potencias siguen siendo W, y la integración de energía demo multiplica el intervalo por la escala registrada. Los cambios de velocidad o escenario separan sesiones para evitar integrar saltos. CSV incluye la velocidad simulada. Las marcas de fecha siguen correspondiendo al teléfono: la energía demo representa tiempo acelerado, no producción real de ese día. Las lecturas reales ignoran esta escala.
+
+En modo pitch la autonomía se presenta en horas decimales, sin minutos. En modo normal y dispositivo real se conserva la duración habitual. «Salir de mi LAPTA» desconecta BLE, detiene el modelo demo, borra la estación recordada y regresa a la entrada sin borrar el historial ni las preferencias de apariencia.
+
+La vida útil del panel se muestra como pendiente de evaluación en ambas modalidades, sin años ni porcentajes inventados. Ver [fundamento y límites](VIDA-UTIL-PANEL.md).
+
+TypeScript, lint y 15 pruebas aprobados, incluidas aceleración del modelo e integración y exclusión de la escala en lecturas reales.
+
+APK release generado e instalado. Recorrido Android final aprobado: entrada y demo, detalles, vida útil pendiente de evaluación, ayuda breve, desactivar/reactivar modo pitch y salir a la entrada sin estación recordada. Se revisaron visualmente [Inicio sin minutos](capturas/14-inicio-simple.png) y [vida útil del panel](capturas/16-vida-util-panel.png). El primer intento encontró los bloqueos de System UI ya documentados; el segundo completó el recorrido. No se probó desgaste físico del panel ni se estimaron años restantes.
+
 ## Validación física pendiente
 
 Teléfono físico con Bluetooth activo, permisos denegados, descubrimiento y conexión a ESP32, pérdida de señal/reconexión, lecturas reales desactualizadas, calibración, falta de espacio, TalkBack y texto ampliado. Controles principales >=48 dp. El flujo respeta reducción de movimiento. No hay un servicio permanente de monitoreo en segundo plano.

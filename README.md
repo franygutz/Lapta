@@ -1,5 +1,9 @@
 # LAPTA · Android
 
+Para presentaciones, **Modo pitch** acelera la demostración ×360: la batería cambia visiblemente cada dos segundos y la autonomía aparece en horas, sin minutos. Se puede desactivar en Ajustes; el hardware real conserva su escala normal. **Salir de mi LAPTA** vuelve a la entrada y desconecta la estación. La [vida útil del panel](docs/VIDA-UTIL-PANEL.md) figura como pendiente de evaluación hasta contar con pruebas técnicas.
+
+La app abre con **el código de tu estación** o **Probar sin estación**. Inicio muestra lo esencial; las unidades y gráficas se abren con **Ver detalles**. La ayuda es opcional y breve, en Ajustes. [Identificación por código y requisitos de firmware](docs/ACCESO-POR-CODIGO.md). Con la app abierta, una lectura actual de batería de 20 % o menos muestra un aviso de ahorro; no sustituye las protecciones del BMS.
+
 Aplicación nativa React Native + Expo SDK 55 y TypeScript estricto. BLE directo a ESP32, SQLite local, fuentes Bree Serif / Nunito Sans y marca oficial incluidas. Sin cuentas, hosting ni servicios de pago. La instalación de herramientas y primera compilación sí requieren internet.
 
 ## Ejecutar y generar APK

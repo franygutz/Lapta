@@ -39,8 +39,13 @@ def nodes():
 def tap(text, scroll=False):
     for _ in range(7 if scroll else 1):
         matches = [n for n in nodes() if n.get('text') == text or n.get('content-desc') == text]
+        visible = []
+        for node in matches:
+            rect = list(map(int, re.findall(r'\d+', node.get('bounds', ''))))
+            if len(rect) == 4 and rect[2] > rect[0] and rect[3] > rect[1] and (text in ['Inicio', 'Energía', 'Historial', 'Ajustes'] or rect[3] < 2169):
+                visible.append(node)
+        matches = visible
         if matches:
-            import re
             x1, y1, x2, y2 = map(int, re.findall(r'\d+', matches[-1].get('bounds', '')))
             adb('shell', 'input', 'tap', str((x1+x2)//2), str((y1+y2)//2))
             time.sleep(0.5)

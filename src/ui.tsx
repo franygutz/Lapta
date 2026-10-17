@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   AccessibilityInfo,
+  Alert,
   Animated,
   Pressable,
   StyleSheet,
@@ -130,7 +131,31 @@ export function Metric({
   const c = React.useContext(Theme);
   return (
     <View style={{ flex: 1, minWidth: 120, paddingVertical: 8 }}>
-      <Label muted>{label}</Label>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Entender ${label}`}
+        style={{ minHeight: 44, justifyContent: "center" }}
+        onPress={() =>
+          Alert.alert(
+            label,
+            unit === "Wh"
+              ? "Es la cantidad de energía guardada o acumulada. Por ejemplo, 100 Wh permiten usar una lámpara de 10 W unas 10 horas, antes de pérdidas."
+              : unit === "W"
+                ? "Es la energía que se produce o usa en este momento. Menos consumo suele significar más tiempo de batería."
+                : unit === "V"
+                  ? "El voltaje es como la presión del agua. Revisa que coincida con el que necesita tu aparato; no representa el porcentaje de batería."
+                  : unit === "A"
+                    ? "La corriente indica cuánta electricidad circula, como el caudal de agua. En la batería, positivo significa que entra y negativo que sale."
+                    : unit === "%"
+                      ? "De cada 100 partes, indica cuántas quedan. La batería al 50 % conserva la mitad de su carga. La salud indica capacidad comparada con una batería nueva."
+                      : unit === "°C"
+                        ? "Indica qué tan caliente está la batería. Los límites seguros dependen del fabricante y del hardware."
+                        : "Este dato proviene del equipo. Si no hay medición disponible, LAPTA muestra un guion.",
+          )
+        }
+      >
+        <Label muted>{label} ⓘ</Label>
+      </Pressable>
       <Text
         style={{
           fontFamily: "NunitoSans",
