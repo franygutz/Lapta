@@ -1,6 +1,5 @@
 node_modules/
 .expo/
-dist/
 android/
 .npm-cache/
 .android-tools/
